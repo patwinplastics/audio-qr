@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AudioQR - Sonic URL Beacon</title>
+<title>AudioQR v2 - Sonic URL Beacon</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -105,7 +105,7 @@
 </head>
 <body>
 
-<h1>AudioQR</h1>
+<h1>AudioQR <span style="font-size:14px;color:#78716c;font-weight:400;">v2</span></h1>
 <p class="sub">A sonic URL beacon. Encode a URL into sound, hold a phone up to a speaker playing it, get the URL on your phone. Proof of concept.</p>
 
 <div class="nav">
@@ -120,7 +120,7 @@
     <h2>Encode a URL into an audio file</h2>
     <label for="urlInput">Destination URL</label>
     <input type="text" id="urlInput" value="https://americanprobp.com/pages/porch.html" />
-    <small>Shorter URLs make shorter audio. A short host like <code>americanprobp.com/p</code> takes about 9 seconds; the full URL takes about 18 seconds.</small>
+    <small>v2 uses 75 ms 8-FSK symbols, a training-tone preamble for per-channel calibration, and 2 redundant copies with byte-level majority voting. A 42-byte URL takes about 27 seconds to broadcast.</small>
     <div style="height: 16px"></div>
     <button onclick="doEncode()">Generate audio</button>
     <button class="secondary" onclick="doPlay()" id="playBtn" disabled>Play</button>
@@ -149,11 +149,11 @@
 <div id="tabAbout" class="hidden">
   <div class="card">
     <h2>How it works</h2>
-    <p><strong>Modulation:</strong> 8-FSK in the 1200 to 1900 Hz audible band. Each 50 ms symbol carries 3 bits. A 500 ms chirp sweep (500 to 2500 Hz) marks the start.</p>
-    <p><strong>Frame:</strong> <code>[chirp preamble] [0xAA 0x55] [len] [URL bytes] [CRC-16] [0x55 0xAA]</code>, transmitted twice for redundancy with a chirp before each pass.</p>
+    <p><strong>Modulation:</strong> 8-FSK in the 1200 to 1900 Hz audible band. Each 75 ms symbol carries 3 bits. A 500 ms chirp sweep (500 to 2500 Hz) marks the start.</p>
+    <p><strong>Frame:</strong> <code>[chirp] [training tones 0-7] [0xAA 0x55 0xC3] [len] [URL] [CRC-16] [0xC3 0x55 0xAA]</code>, transmitted twice. The training preamble lets the decoder learn per-tone gain on the actual mic+room channel before reading the payload.</p>
+    <p><strong>Error tolerance:</strong> Symbol-level micro-realignment per symbol, byte-level majority voting across both copies, and CRC-16 validation. Eliminates the false-positive trap of single-copy CRC search.</p>
     <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz; AM caps at 5 to 10 kHz; podcast codecs (Opus, MP3 at 128 kbps) preserve the speech band (1 to 4 kHz) best. Putting tones at 1.2 to 1.9 kHz survives all of these.</p>
     <p><strong>Why direct URL encoding:</strong> Avoids the Chirp/Sonos shortcode-to-server patent (active until 2032). No server lookup; the URL travels inside the audio.</p>
-    <p><strong>What this does not do yet:</strong> No cryptographic signing, no Reed-Solomon FEC (CRC only), no analytics, no app. v1 prototype.</p>
   </div>
 </div>
 
@@ -264,11 +264,12 @@ async function toggleListen() {
       chunk.set(input);
       captureBuffer.push(chunk);
       const now = Date.now();
-      if (now - lastDecodeAttempt > 2000 && !decodeInFlight) {
+      if (now - lastDecodeAttempt > 3000 && !decodeInFlight) {
         lastDecodeAttempt = now;
         tryDecode();
       }
-      const maxSamples = audioCtx.sampleRate * 20;
+      // Buffer up to 35 seconds to hold a full 27-sec v2 signal with margin
+      const maxSamples = audioCtx.sampleRate * 35;
       let totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
       while (captureBuffer.length > 1 && totalSamples > maxSamples) {
         const removed = captureBuffer.shift().length;
@@ -336,7 +337,7 @@ function tryDecode() {
   if (!listening || captureBuffer.length === 0 || !decoderWorker) return;
   let totalSamples = 0;
   for (const c of captureBuffer) totalSamples += c.length;
-  if (totalSamples < audioCtx.sampleRate * 2) return;
+  if (totalSamples < audioCtx.sampleRate * 3) return;
   const samples = new Float32Array(totalSamples);
   let pos = 0;
   for (const c of captureBuffer) { samples.set(c, pos); pos += c.length; }
