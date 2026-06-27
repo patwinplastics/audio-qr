@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AudioQR · Sonic URL Beacon</title>
+<title>AudioQR - Sonic URL Beacon</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -92,6 +92,15 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 12px; color: #78716c; margin-top: 8px;
   }
+  .log {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; background: #1c1917; color: #d6d3d1;
+    padding: 10px 12px; border-radius: 6px; margin-top: 12px;
+    max-height: 180px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .log .ts { color: #78716c; }
+  .log .hit { color: #4ade80; }
 </style>
 </head>
 <body>
@@ -111,7 +120,7 @@
     <h2>Encode a URL into an audio file</h2>
     <label for="urlInput">Destination URL</label>
     <input type="text" id="urlInput" value="https://americanprobp.com/pages/porch.html" />
-    <small>Shorter URLs make shorter audio. <code>americanprobp.com/p</code> ≈ 9 sec, full URL ≈ 17 sec.</small>
+    <small>Shorter URLs make shorter audio. A short host like <code>americanprobp.com/p</code> takes about 9 seconds; the full URL takes about 18 seconds.</small>
     <div style="height: 16px"></div>
     <button onclick="doEncode()">Generate audio</button>
     <button class="secondary" onclick="doPlay()" id="playBtn" disabled>Play</button>
@@ -126,11 +135,12 @@
 <div id="tabListen" class="hidden">
   <div class="card">
     <h2>Listen for an AudioQR signal</h2>
-    <p>Tap the button below, allow microphone access, and hold your phone near a speaker playing an AudioQR-encoded audio. When the signal is decoded, a tap card will appear.</p>
+    <p>Tap the button below, allow microphone access, and hold your phone near a speaker playing AudioQR-encoded audio. When the signal is decoded, a tap card will appear.</p>
     <button id="listenBtn" onclick="toggleListen()">Start listening</button>
     <div class="status" id="listenStatus">Tap to begin.</div>
     <div class="mic-level"><div class="mic-level-bar" id="micBar"></div></div>
     <div class="meta" id="listenMeta"></div>
+    <div class="log hidden" id="listenLog"></div>
     <div id="resultPreview"></div>
   </div>
 </div>
@@ -139,18 +149,18 @@
 <div id="tabAbout" class="hidden">
   <div class="card">
     <h2>How it works</h2>
-    <p><strong>Modulation:</strong> 8-FSK in the 1200–1900 Hz audible band. Each 50 ms symbol carries 3 bits. A 500 ms chirp sweep (500–2500 Hz) marks the start.</p>
-    <p><strong>Frame:</strong> <code>[chirp preamble] [0xAA 0x55] [len] [URL bytes] [CRC-16] [0x55 0xAA]</code>, transmitted twice for redundancy.</p>
-    <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz; AM caps at 5–10 kHz; podcast codecs (Opus, MP3 at 128 kbps) preserve the speech band (1–4 kHz) best. Putting tones at 1.2–1.9 kHz survives all of these.</p>
-    <p><strong>Why direct URL encoding:</strong> Avoids the Chirp/Sonos shortcode-to-server patent (active until 2032). No server lookup; the URL travels in the audio.</p>
+    <p><strong>Modulation:</strong> 8-FSK in the 1200 to 1900 Hz audible band. Each 50 ms symbol carries 3 bits. A 500 ms chirp sweep (500 to 2500 Hz) marks the start.</p>
+    <p><strong>Frame:</strong> <code>[chirp preamble] [0xAA 0x55] [len] [URL bytes] [CRC-16] [0x55 0xAA]</code>, transmitted twice for redundancy with a chirp before each pass.</p>
+    <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz; AM caps at 5 to 10 kHz; podcast codecs (Opus, MP3 at 128 kbps) preserve the speech band (1 to 4 kHz) best. Putting tones at 1.2 to 1.9 kHz survives all of these.</p>
+    <p><strong>Why direct URL encoding:</strong> Avoids the Chirp/Sonos shortcode-to-server patent (active until 2032). No server lookup; the URL travels inside the audio.</p>
     <p><strong>What this does not do yet:</strong> No cryptographic signing, no Reed-Solomon FEC (CRC only), no analytics, no app. v1 prototype.</p>
   </div>
 </div>
 
 <script src="protocol.js"></script>
 <script>
-let currentAudio = null;     // Float32Array of last encoded audio
-let currentWav = null;       // ArrayBuffer of WAV
+let currentAudio = null;
+let currentWav = null;
 let currentUrl = "";
 let audioCtx = null;
 let listenStream = null;
@@ -160,6 +170,9 @@ let captureStartedAt = 0;
 let lastDecodeAttempt = 0;
 let micAnalyser = null;
 let micRafId = null;
+let decoderWorker = null;
+let decodeJobId = 0;
+let decodeInFlight = false;
 
 function showTab(t) {
   document.getElementById("tabEncode").classList.toggle("hidden", t !== "encode");
@@ -195,7 +208,7 @@ function doEncode() {
     const durSec = (currentAudio.length / AudioQR.PROTOCOL.SAMPLE_RATE).toFixed(2);
     setStatus("encodeStatus", "Encoded " + url.length + " bytes into " + durSec + " sec of audio.", "success");
     document.getElementById("encodeMeta").textContent =
-      "Samples: " + currentAudio.length + " · Rate: " + AudioQR.PROTOCOL.SAMPLE_RATE + " Hz · Size: " + (currentWav.byteLength / 1024).toFixed(1) + " KB";
+      "Samples: " + currentAudio.length + " / Rate: " + AudioQR.PROTOCOL.SAMPLE_RATE + " Hz / Size: " + (currentWav.byteLength / 1024).toFixed(1) + " KB";
   } catch (e) {
     setStatus("encodeStatus", "Error: " + e.message, "error");
   }
@@ -233,46 +246,53 @@ async function toggleListen() {
         channelCount: 1,
       }
     });
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") await audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(listenStream);
     micAnalyser = audioCtx.createAnalyser();
     micAnalyser.fftSize = 1024;
     src.connect(micAnalyser);
 
-    // Capture via ScriptProcessor (works on iOS Safari + all browsers; deprecated but reliable)
     const proc = audioCtx.createScriptProcessor(4096, 1, 1);
     captureBuffer = [];
     captureStartedAt = Date.now();
     lastDecodeAttempt = 0;
     proc.onaudioprocess = (e) => {
+      if (!listening) return;
       const input = e.inputBuffer.getChannelData(0);
       const chunk = new Float32Array(input.length);
       chunk.set(input);
       captureBuffer.push(chunk);
-      // Try decoding every 1.5 sec, on the most recent ~12 sec
       const now = Date.now();
-      if (now - lastDecodeAttempt > 1500) {
+      if (now - lastDecodeAttempt > 2000 && !decodeInFlight) {
         lastDecodeAttempt = now;
         tryDecode();
       }
-      // Cap buffer at ~20 sec
-      const totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
       const maxSamples = audioCtx.sampleRate * 20;
+      let totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
       while (captureBuffer.length > 1 && totalSamples > maxSamples) {
         const removed = captureBuffer.shift().length;
-        if (totalSamples - removed <= maxSamples) break;
+        totalSamples -= removed;
       }
     };
     src.connect(proc);
     proc.connect(audioCtx.destination);
-    window._audioqr_proc = proc; // keep reference
+    window._audioqr_proc = proc;
+
+    if (!decoderWorker) {
+      decoderWorker = new Worker("decoder.worker.js");
+      decoderWorker.onmessage = onWorkerMessage;
+      decoderWorker.onerror = (e) => logLine("Worker error: " + e.message);
+    }
 
     listening = true;
     document.getElementById("listenBtn").textContent = "Stop listening";
-    setStatus("listenStatus", "Listening...");
     document.getElementById("listenStatus").innerHTML = '<span class="listen-anim"></span>Listening for AudioQR signal...';
     document.getElementById("resultPreview").innerHTML = "";
+    const log = document.getElementById("listenLog");
+    log.classList.remove("hidden");
+    log.innerHTML = "";
+    logLine("Mic open at " + audioCtx.sampleRate + " Hz. Waiting for signal.");
     updateMicLevel();
   } catch (e) {
     setStatus("listenStatus", "Microphone error: " + e.message, "error");
@@ -281,18 +301,24 @@ async function toggleListen() {
 
 function stopListening() {
   listening = false;
+  decodeInFlight = false;
   if (listenStream) {
-    listenStream.getTracks().forEach(t => t.stop());
+    try { listenStream.getTracks().forEach(t => t.stop()); } catch (e) {}
     listenStream = null;
   }
   if (window._audioqr_proc) {
-    window._audioqr_proc.disconnect();
+    try { window._audioqr_proc.disconnect(); } catch (e) {}
     window._audioqr_proc = null;
+  }
+  if (decoderWorker) {
+    try { decoderWorker.terminate(); } catch (e) {}
+    decoderWorker = null;
   }
   if (micRafId) cancelAnimationFrame(micRafId);
   document.getElementById("listenBtn").textContent = "Start listening";
   setStatus("listenStatus", "Stopped.");
   document.getElementById("micBar").style.width = "0%";
+  logLine("Stopped.");
 }
 
 function updateMicLevel() {
@@ -307,39 +333,76 @@ function updateMicLevel() {
 }
 
 function tryDecode() {
-  if (captureBuffer.length === 0) return;
-  // Concatenate buffer
-  const totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
+  if (!listening || captureBuffer.length === 0 || !decoderWorker) return;
+  let totalSamples = 0;
+  for (const c of captureBuffer) totalSamples += c.length;
+  if (totalSamples < audioCtx.sampleRate * 2) return;
   const samples = new Float32Array(totalSamples);
   let pos = 0;
   for (const c of captureBuffer) { samples.set(c, pos); pos += c.length; }
   document.getElementById("listenMeta").textContent =
-    "Capturing... " + (totalSamples / audioCtx.sampleRate).toFixed(1) + " sec @ " + audioCtx.sampleRate + " Hz";
+    "Buffered " + (totalSamples / audioCtx.sampleRate).toFixed(1) + " sec at " + audioCtx.sampleRate + " Hz";
+  decodeInFlight = true;
+  const jobId = ++decodeJobId;
+  decoderWorker.postMessage({
+    type: "decode",
+    jobId,
+    samples,
+    sampleRate: audioCtx.sampleRate
+  }, [samples.buffer]);
+  logLine("Decode pass #" + jobId + " on " + (totalSamples / audioCtx.sampleRate).toFixed(1) + "s of audio");
+}
 
-  const url = AudioQR.decodeAudio(samples, audioCtx.sampleRate);
-  if (url) {
-    onDecodeSuccess(url);
+function onWorkerMessage(e) {
+  const msg = e.data;
+  if (msg.type !== "result") return;
+  decodeInFlight = false;
+  if (!listening) return;
+  if (msg.debug && msg.debug.length) {
+    for (const d of msg.debug) logLine("  " + d);
   }
+  if (msg.url) {
+    logLine('URL detected: ' + msg.url, "hit");
+    onDecodeSuccess(msg.url);
+  } else {
+    logLine("  no frame this pass");
+  }
+}
+
+function logLine(s, cls) {
+  const el = document.getElementById("listenLog");
+  if (!el) return;
+  const ts = new Date().toLocaleTimeString();
+  const div = document.createElement("div");
+  const tsSpan = document.createElement("span");
+  tsSpan.className = "ts";
+  tsSpan.textContent = ts + " ";
+  div.appendChild(tsSpan);
+  const body = document.createElement("span");
+  if (cls) body.className = cls;
+  body.textContent = s;
+  div.appendChild(body);
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
 }
 
 function onDecodeSuccess(url) {
   stopListening();
   setStatus("listenStatus", "Signal received.", "success");
-  // Validate URL
   let safe = url;
   if (!/^https?:\/\//i.test(safe)) safe = "https://" + safe;
   const preview = document.getElementById("resultPreview");
+  const safeText = String(safe).replace(/[<>"']/g, "");
   preview.innerHTML = `
     <div class="preview">
       <div style="font-size: 12px; color: #166534; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Detected</div>
       <div style="font-size: 18px; font-weight: 600; margin-bottom: 6px;">American Pro Porch</div>
-      <div class="url">${safe}</div>
-      <a href="${safe}" target="_blank" rel="noopener">Open in new tab →</a>
+      <div class="url">${safeText}</div>
+      <a href="${safeText}" target="_blank" rel="noopener">Open in new tab</a>
     </div>
   `;
 }
 
-// Default to encode tab; if URL has #listen, switch
 if (location.hash === "#listen") showTab("listen");
 </script>
 </body>
