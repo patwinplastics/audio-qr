@@ -164,7 +164,7 @@
 </div>
 
 <div style="margin: -16px 0 16px; text-align: right;">
-  <span class="connection-pill" id="connPill"><span class="dot"></span><span id="connText">Registry not configured</span></span>
+  <span class="connection-pill" id="connPill"><span class="dot"></span><span id="connText">Connecting...</span></span>
 </div>
 
 <!-- ENCODE TAB -->
@@ -242,24 +242,24 @@
 <div id="tabSettings" class="hidden">
   <div class="card">
     <h2>Registry settings</h2>
-    <p>Configure the Cloudflare Worker that stores your tokens. Settings are saved in this browser's local storage.</p>
+    <p>The Cloudflare Worker that stores your tokens is preconfigured. You only need to touch this tab if you ever change Workers or want to point this device at a different registry.</p>
 
     <h3>Worker URL</h3>
-    <input type="text" id="workerUrlInput" placeholder="https://audioqr-registry.your-account.workers.dev" />
-    <small>The base URL of your Cloudflare Worker. No trailing slash.</small>
+    <input type="text" id="workerUrlInput" placeholder="https://audioqr-registry.jim-m.workers.dev" />
+    <small>Leave blank to use the built in default. Overrides win when filled.</small>
 
     <h3>API key</h3>
-    <input type="password" id="apiKeyInput" placeholder="your secret API key" />
-    <small>Required for creating new tokens. Saved locally on this device only. Reading tokens does not require a key.</small>
+    <input type="password" id="apiKeyInput" placeholder="using built in default" />
+    <small>Required only for creating or deleting tokens. Reading is public.</small>
 
     <h3>Namespace</h3>
-    <input type="text" id="namespaceInput" placeholder="default" value="default" />
+    <input type="text" id="namespaceInput" placeholder="default" />
     <small>Use different namespaces to separate tokens between brands or product lines (e.g. apbp, truegrain). Default works fine for a single brand.</small>
 
     <div style="height: 16px"></div>
     <button onclick="saveSettings()">Save settings</button>
     <button class="secondary" onclick="testConnection()">Test connection</button>
-    <div class="status" id="settingsStatus">Not configured yet.</div>
+    <div class="status" id="settingsStatus">Using built in defaults.</div>
   </div>
 </div>
 
@@ -296,6 +296,11 @@ let decodeJobId = 0;
 let decodeInFlight = false;
 
 // ---- Settings ----
+// Baked in production defaults so the page works out of the box on any device.
+// The user can still override these in the Settings tab; overrides win.
+const DEFAULT_WORKER_URL = "https://audioqr-registry.jim-m.workers.dev";
+const DEFAULT_API_KEY    = "aDUher0AuNx9Rw5pydPzNrfwUwpm3Qce";
+const DEFAULT_NAMESPACE  = "default";
 const SETTINGS_KEY = "audioqr_v2_settings";
 function loadSettings() {
   try {
@@ -309,9 +314,9 @@ function saveSettingsObject(s) {
 function getSettings() {
   const s = loadSettings();
   return {
-    workerUrl: (s.workerUrl || "").replace(/\/+$/, ""),
-    apiKey: s.apiKey || "",
-    namespace: s.namespace || "default",
+    workerUrl: ((s.workerUrl && s.workerUrl.trim()) || DEFAULT_WORKER_URL).replace(/\/+$/, ""),
+    apiKey:    (s.apiKey    && s.apiKey.trim())    || DEFAULT_API_KEY,
+    namespace: (s.namespace && s.namespace.trim()) || DEFAULT_NAMESPACE,
   };
 }
 function saveSettings() {
@@ -506,13 +511,9 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("tokenInput").addEventListener("input", updateBroadcastPreview);
   document.getElementById("domainInput").addEventListener("input", updateBroadcastPreview);
   document.getElementById("urlInput").addEventListener("input", updateBroadcastPreview);
-  // Initial settings check.
-  const s = getSettings();
-  if (s.workerUrl) {
-    testConnection();
-  } else {
-    updateConnPill(false, "Registry not configured");
-  }
+  // Initial settings check. getSettings() always returns a usable Worker URL
+  // because of baked in defaults, so we can just go straight to a live check.
+  testConnection();
   updateBroadcastPreview();
 });
 
