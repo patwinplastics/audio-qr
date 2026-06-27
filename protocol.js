@@ -1,4 +1,4 @@
-// Audio-QR Protocol v2.0 (Bulletproof)
+// Audio-QR Protocol v2.1 (Bulletproof + Fast)
 // Shared encoder/decoder logic for browser + Node
 //
 // Design goals over v1:
@@ -22,8 +22,8 @@
 
 const PROTOCOL = {
   SAMPLE_RATE: 44100,
-  SYMBOL_MS: 75,             // 1.5x v1 for better SNR per symbol
-  GUARD_MS: 15,              // a touch longer than v1
+  SYMBOL_MS: 55,             // tightened for sub-12s broadcasts (still 1.1x v1)
+  GUARD_MS: 10,
   PREAMBLE_MS: 500,
   SHORT_PREAMBLE_MS: 300,
   PREAMBLE_LOW: 500,
@@ -39,7 +39,7 @@ const PROTOCOL = {
   POST_PREAMBLE_GAP_MS: 200,
   POST_TRAINING_GAP_MS: 100,
   INTER_COPY_GAP_MS: 150,
-  VERSION: "2.0",
+  VERSION: "2.1",
 };
 
 function symbolFreq(sym) {
@@ -555,9 +555,44 @@ function audioToWav(samples, sampleRate) {
   return new Uint8Array(buf);
 }
 
+// ---- Crockford Base32 token helpers ----
+// Alphabet excludes I, L, O, U to avoid ambiguity.
+const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+function generateToken(length) {
+  const n = length || 6;
+  let out = "";
+  // Prefer crypto.getRandomValues when present (browser + Node 19+).
+  let bytes;
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    bytes = new Uint8Array(n);
+    crypto.getRandomValues(bytes);
+  } else {
+    bytes = new Uint8Array(n);
+    for (let i = 0; i < n; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  for (let i = 0; i < n; i++) out += CROCKFORD_ALPHABET[bytes[i] & 31];
+  return out;
+}
+
+function isShortToken(s) {
+  if (typeof s !== 'string') return false;
+  // Strict Crockford Base32, 6 chars, no I/L/O/U.
+  return /^[0-9A-HJKMNP-TV-Z]{6}$/i.test(s);
+}
+
+// Normalize a Crockford token for lookup: uppercase + map ambiguous chars.
+function normalizeToken(s) {
+  if (typeof s !== 'string') return s;
+  return s.toUpperCase()
+    .replace(/I/g, '1').replace(/L/g, '1')
+    .replace(/O/g, '0').replace(/U/g, 'V');
+}
+
 const _API = {
   PROTOCOL, encodeURL, encodeBytesToAudio, decodeAudio, audioToWav,
   crc16, buildFrame, bytesToSymbols, symbolsToBytes, findValidFrame,
+  generateToken, isShortToken, normalizeToken, CROCKFORD_ALPHABET,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

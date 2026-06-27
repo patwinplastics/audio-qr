@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AudioQR v2 - Sonic URL Beacon</title>
+<title>AudioQR v2.1 - Sonic URL Beacon</title>
 <style>
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 720px;
+    max-width: 760px;
     margin: 0 auto;
     padding: 24px 20px 60px;
     background: #fafaf9;
@@ -25,6 +25,7 @@
     margin-bottom: 16px;
   }
   .card h2 { font-size: 18px; margin: 0 0 12px; }
+  .card h3 { font-size: 14px; margin: 18px 0 8px; color: #44403c; text-transform: uppercase; letter-spacing: 0.05em; }
   .row { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; }
   .row > * { flex: 1; min-width: 140px; }
   button {
@@ -62,7 +63,6 @@
     border: 2px solid #16a34a; border-radius: 12px; padding: 20px;
     margin-top: 16px; background: #f0fdf4;
   }
-  .preview img { width: 100%; border-radius: 8px; margin-bottom: 12px; }
   .preview .url { font-size: 13px; color: #166534; word-break: break-all; }
   .preview a {
     display: block; background: #16a34a; color: white; text-align: center;
@@ -92,6 +92,19 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 12px; color: #78716c; margin-top: 8px;
   }
+  .token-display {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 22px; font-weight: 600; letter-spacing: 0.1em;
+    background: #fef3c7; color: #78350f;
+    padding: 12px 16px; border-radius: 8px; margin: 12px 0;
+    text-align: center;
+  }
+  .broadcast-string {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 14px; color: #1c1917;
+    background: #f5f5f4; padding: 8px 12px; border-radius: 6px;
+    word-break: break-all; margin: 8px 0;
+  }
   .log {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 11px; background: #1c1917; color: #d6d3d1;
@@ -101,16 +114,30 @@
   }
   .log .ts { color: #78716c; }
   .log .hit { color: #4ade80; }
+  .mode-row { display: flex; gap: 8px; margin: 10px 0 16px; }
+  .mode-row button {
+    flex: 1; background: #f5f5f4; color: #44403c;
+    border: 1px solid #e7e5e4; padding: 10px;
+    font-size: 14px; font-weight: 500;
+  }
+  .mode-row button.active { background: #1c1917; color: white; border-color: #1c1917; }
+  .registry {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; background: #f5f5f4; padding: 10px 12px;
+    border-radius: 6px; max-height: 200px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
 </style>
 </head>
 <body>
 
-<h1>AudioQR <span style="font-size:14px;color:#78716c;font-weight:400;">v2</span></h1>
-<p class="sub">A sonic URL beacon. Encode a URL into sound, hold a phone up to a speaker playing it, get the URL on your phone. Proof of concept.</p>
+<h1>AudioQR <span style="font-size:14px;color:#78716c;font-weight:400;">v2.1</span></h1>
+<p class="sub">A sonic URL beacon. Encode a URL into sound, hold a phone up to a speaker playing it, get the URL on your phone. v2.1 adds a 6-char short-token mode that broadcasts in under 8 seconds.</p>
 
 <div class="nav">
   <button id="navEncode" class="active" onclick="showTab('encode')">Encode (broadcaster)</button>
   <button id="navListen" onclick="showTab('listen')">Listen (phone)</button>
+  <button id="navRegistry" onclick="showTab('registry')">Registry</button>
   <button id="navAbout" onclick="showTab('about')">About</button>
 </div>
 
@@ -118,11 +145,40 @@
 <div id="tabEncode">
   <div class="card">
     <h2>Encode a URL into an audio file</h2>
-    <label for="urlInput">Destination URL</label>
+
+    <h3>1. Broadcast mode</h3>
+    <div class="mode-row">
+      <button id="modeShort" class="active" onclick="setMode('short')">Short token (~7s)</button>
+      <button id="modeDomain" onclick="setMode('domain')">Domain + token (~10s)</button>
+      <button id="modeFull" onclick="setMode('full')">Full URL (~10s+)</button>
+    </div>
+
+    <div id="modeHelp" style="margin-bottom: 16px;">
+      <small id="modeHelpText">Broadcasts just the 6-char token. The phone resolves it via the tokens.json registry on this site. Fastest option.</small>
+    </div>
+
+    <h3>2. Destination URL</h3>
+    <label for="urlInput">Where the token should point to</label>
     <input type="text" id="urlInput" value="https://americanprobp.com/pages/porch.html" />
-    <small>v2 uses 75 ms 8-FSK symbols, a training-tone preamble for per-channel calibration, and 2 redundant copies with byte-level majority voting. A 42-byte URL takes about 27 seconds to broadcast.</small>
+
+    <div id="domainBlock" class="hidden" style="margin-top:14px;">
+      <label for="domainInput">Short domain (broadcast as a prefix)</label>
+      <input type="text" id="domainInput" value="apbp.co" placeholder="e.g. apbp.co" />
+      <small>This domain should redirect a token path (like apbp.co/PORCH1) to the destination URL. You set this up externally.</small>
+    </div>
+
+    <h3>3. Token</h3>
+    <div class="row" style="align-items: center;">
+      <input type="text" id="tokenInput" value="PRCH22" maxlength="6" style="text-transform: uppercase; font-family: ui-monospace, monospace; font-weight: 600;" />
+      <button class="secondary" onclick="rollToken()" style="flex: 0 0 auto;">Roll new</button>
+    </div>
+    <small>6 characters, Crockford Base32 (A-Z minus I,L,O,U + 2-9). Case-insensitive on the listener side.</small>
+
+    <h3>4. Broadcast string preview</h3>
+    <div class="broadcast-string" id="broadcastPreview">PRCH22</div>
+
     <div style="height: 16px"></div>
-    <button onclick="doEncode()">Generate audio</button>
+    <button onclick="doEncode()">Generate audio + register token</button>
     <button class="secondary" onclick="doPlay()" id="playBtn" disabled>Play</button>
     <button class="secondary" onclick="doDownload()" id="dlBtn" disabled>Download WAV</button>
     <div class="status" id="encodeStatus">Ready.</div>
@@ -145,15 +201,30 @@
   </div>
 </div>
 
+<!-- REGISTRY TAB -->
+<div id="tabRegistry" class="hidden">
+  <div class="card">
+    <h2>Token registry (tokens.json)</h2>
+    <p>This is the live registry served from this site. When a phone decodes a 6-character short token, it looks the token up here and redirects to the matching URL.</p>
+    <button class="secondary" onclick="loadRegistry()">Refresh</button>
+    <div style="height: 12px"></div>
+    <div class="registry" id="registryView">Loading...</div>
+    <small style="display:block; margin-top:12px;">New tokens generated in the Encode tab are added to your local copy of the registry in this browser session. To persist them publicly, commit the updated tokens.json file to the repository.</small>
+    <div style="height: 12px"></div>
+    <button class="secondary" onclick="downloadRegistry()">Download updated tokens.json</button>
+  </div>
+</div>
+
 <!-- ABOUT TAB -->
 <div id="tabAbout" class="hidden">
   <div class="card">
-    <h2>How it works</h2>
-    <p><strong>Modulation:</strong> 8-FSK in the 1200 to 1900 Hz audible band. Each 75 ms symbol carries 3 bits. A 500 ms chirp sweep (500 to 2500 Hz) marks the start.</p>
-    <p><strong>Frame:</strong> <code>[chirp] [training tones 0-7] [0xAA 0x55 0xC3] [len] [URL] [CRC-16] [0xC3 0x55 0xAA]</code>, transmitted twice. The training preamble lets the decoder learn per-tone gain on the actual mic+room channel before reading the payload.</p>
-    <p><strong>Error tolerance:</strong> Symbol-level micro-realignment per symbol, byte-level majority voting across both copies, and CRC-16 validation. Eliminates the false-positive trap of single-copy CRC search.</p>
-    <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz; AM caps at 5 to 10 kHz; podcast codecs (Opus, MP3 at 128 kbps) preserve the speech band (1 to 4 kHz) best. Putting tones at 1.2 to 1.9 kHz survives all of these.</p>
-    <p><strong>Why direct URL encoding:</strong> Avoids the Chirp/Sonos shortcode-to-server patent (active until 2032). No server lookup; the URL travels inside the audio.</p>
+    <h2>How AudioQR v2.1 works</h2>
+    <p><strong>Modulation:</strong> 8-FSK in the 1200 to 1900 Hz audible band. Each 55 ms symbol carries 3 bits, with a 10 ms guard between symbols. A 500 ms chirp sweep (500 to 2500 Hz) marks the start.</p>
+    <p><strong>Frame:</strong> <code>[chirp] [training tones 0-7] [0xAA 0x55 0xC3] [len] [payload] [CRC-16] [0xC3 0x55 0xAA]</code>, transmitted twice. The training preamble lets the decoder learn per-tone gain on the actual mic and room channel before reading the payload.</p>
+    <p><strong>Error tolerance:</strong> Per-symbol micro-realignment with drift tracking, byte-level majority voting across both copies, and CRC-16 validation. No false-positive CRC search.</p>
+    <p><strong>Short tokens:</strong> 6-character Crockford Base32 (excludes I, L, O, U to avoid ambiguity). About 1.07 billion combinations. Broadcasts in roughly 7 to 8 seconds. The listener resolves the token to a full URL via tokens.json on this site.</p>
+    <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz, AM caps at 5 to 10 kHz, podcast codecs preserve the speech band (1 to 4 kHz) best. Putting tones at 1.2 to 1.9 kHz survives all of these.</p>
+    <p><strong>Why a registry (not direct shortcode lookup):</strong> The decoded payload is the token itself. The listener performs a static JSON fetch from a public file. No proprietary lookup server, no patent exposure.</p>
   </div>
 </div>
 
@@ -161,7 +232,9 @@
 <script>
 let currentAudio = null;
 let currentWav = null;
-let currentUrl = "";
+let currentBroadcastString = "";
+let currentMode = "short";
+let currentDestUrl = "";
 let audioCtx = null;
 let listenStream = null;
 let listening = false;
@@ -173,14 +246,18 @@ let micRafId = null;
 let decoderWorker = null;
 let decodeJobId = 0;
 let decodeInFlight = false;
+let registryData = { tokens: {}, _meta: {} };
 
 function showTab(t) {
   document.getElementById("tabEncode").classList.toggle("hidden", t !== "encode");
   document.getElementById("tabListen").classList.toggle("hidden", t !== "listen");
+  document.getElementById("tabRegistry").classList.toggle("hidden", t !== "registry");
   document.getElementById("tabAbout").classList.toggle("hidden", t !== "about");
   document.getElementById("navEncode").classList.toggle("active", t === "encode");
   document.getElementById("navListen").classList.toggle("active", t === "listen");
+  document.getElementById("navRegistry").classList.toggle("active", t === "registry");
   document.getElementById("navAbout").classList.toggle("active", t === "about");
+  if (t === "registry") loadRegistry();
 }
 
 function setStatus(id, msg, cls) {
@@ -190,13 +267,70 @@ function setStatus(id, msg, cls) {
 }
 
 // ---- ENCODE ----
-function doEncode() {
+function setMode(m) {
+  currentMode = m;
+  document.getElementById("modeShort").classList.toggle("active", m === "short");
+  document.getElementById("modeDomain").classList.toggle("active", m === "domain");
+  document.getElementById("modeFull").classList.toggle("active", m === "full");
+
+  const help = document.getElementById("modeHelpText");
+  if (m === "short") {
+    help.textContent = "Broadcasts just the 6-char token. The phone resolves it via the tokens.json registry on this site. Fastest option.";
+  } else if (m === "domain") {
+    help.textContent = "Broadcasts your short domain plus the token (e.g. apbp.co/PORCH1). The phone opens it directly; your domain handles the redirect.";
+  } else {
+    help.textContent = "Broadcasts the full URL exactly as entered. No token, no registry lookup. Longest broadcast.";
+  }
+  document.getElementById("domainBlock").classList.toggle("hidden", m !== "domain");
+  updateBroadcastPreview();
+}
+
+function rollToken() {
+  const tok = AudioQR.generateToken(6);
+  document.getElementById("tokenInput").value = tok;
+  updateBroadcastPreview();
+}
+
+function updateBroadcastPreview() {
+  const token = (document.getElementById("tokenInput").value || "").toUpperCase().trim();
+  const domain = (document.getElementById("domainInput").value || "").trim();
   const url = document.getElementById("urlInput").value.trim();
-  if (!url) { setStatus("encodeStatus", "Enter a URL.", "error"); return; }
+  let str = "";
+  if (currentMode === "short") str = token;
+  else if (currentMode === "domain") str = domain + "/" + token;
+  else str = url;
+  currentBroadcastString = str;
+  document.getElementById("broadcastPreview").textContent = str || "(empty)";
+}
+
+// Wire up live preview updates.
+window.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("tokenInput").addEventListener("input", updateBroadcastPreview);
+  document.getElementById("domainInput").addEventListener("input", updateBroadcastPreview);
+  document.getElementById("urlInput").addEventListener("input", updateBroadcastPreview);
+  loadRegistry();
+});
+
+function doEncode() {
+  updateBroadcastPreview();
+  const broadcast = currentBroadcastString;
+  const dest = document.getElementById("urlInput").value.trim();
+  const token = document.getElementById("tokenInput").value.toUpperCase().trim();
+
+  if (!broadcast) { setStatus("encodeStatus", "Nothing to broadcast.", "error"); return; }
+  if (currentMode !== "full" && !AudioQR.isShortToken(token)) {
+    setStatus("encodeStatus", "Token must be exactly 6 Crockford Base32 chars (A-Z minus I/L/O/U, 2-9).", "error");
+    return;
+  }
+  if (!dest && currentMode !== "full") {
+    setStatus("encodeStatus", "Set a destination URL so the token has somewhere to go.", "error");
+    return;
+  }
+
   setStatus("encodeStatus", "Encoding...");
   try {
-    currentUrl = url;
-    currentAudio = AudioQR.encodeURL(url);
+    currentDestUrl = dest;
+    currentAudio = AudioQR.encodeURL(broadcast);
     currentWav = AudioQR.audioToWav(currentAudio, AudioQR.PROTOCOL.SAMPLE_RATE);
     const blob = new Blob([currentWav], { type: "audio/wav" });
     const blobUrl = URL.createObjectURL(blob);
@@ -206,9 +340,18 @@ function doEncode() {
     document.getElementById("playBtn").disabled = false;
     document.getElementById("dlBtn").disabled = false;
     const durSec = (currentAudio.length / AudioQR.PROTOCOL.SAMPLE_RATE).toFixed(2);
-    setStatus("encodeStatus", "Encoded " + url.length + " bytes into " + durSec + " sec of audio.", "success");
+    setStatus("encodeStatus", "Encoded " + broadcast.length + " bytes into " + durSec + " sec of audio.", "success");
     document.getElementById("encodeMeta").textContent =
       "Samples: " + currentAudio.length + " / Rate: " + AudioQR.PROTOCOL.SAMPLE_RATE + " Hz / Size: " + (currentWav.byteLength / 1024).toFixed(1) + " KB";
+
+    // Add token to local registry if this is a short or domain mode broadcast.
+    if (currentMode === "short" || currentMode === "domain") {
+      registryData.tokens = registryData.tokens || {};
+      registryData.tokens[token] = dest;
+      if (!registryData._meta) registryData._meta = { format: "audioqr-tokens-v1" };
+      registryData._meta.updated = new Date().toISOString().slice(0, 10);
+      renderRegistry();
+    }
   } catch (e) {
     setStatus("encodeStatus", "Error: " + e.message, "error");
   }
@@ -225,7 +368,41 @@ function doDownload() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "audioqr.wav";
+  const safeName = (currentBroadcastString || "audioqr").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24);
+  a.download = "audioqr_" + safeName + ".wav";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---- REGISTRY ----
+async function loadRegistry() {
+  try {
+    const res = await fetch("tokens.json?t=" + Date.now());
+    if (res.ok) {
+      const fresh = await res.json();
+      // Merge any locally-added tokens on top of the fetched registry.
+      const localTokens = registryData.tokens || {};
+      registryData = fresh;
+      registryData.tokens = Object.assign({}, fresh.tokens || {}, localTokens);
+    }
+  } catch (e) {
+    // Use whatever we have locally if fetch fails.
+  }
+  renderRegistry();
+}
+
+function renderRegistry() {
+  const el = document.getElementById("registryView");
+  if (!el) return;
+  el.textContent = JSON.stringify(registryData, null, 2);
+}
+
+function downloadRegistry() {
+  const blob = new Blob([JSON.stringify(registryData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "tokens.json";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -264,12 +441,12 @@ async function toggleListen() {
       chunk.set(input);
       captureBuffer.push(chunk);
       const now = Date.now();
-      if (now - lastDecodeAttempt > 3000 && !decodeInFlight) {
+      if (now - lastDecodeAttempt > 2500 && !decodeInFlight) {
         lastDecodeAttempt = now;
         tryDecode();
       }
-      // Buffer up to 35 seconds to hold a full 27-sec v2 signal with margin
-      const maxSamples = audioCtx.sampleRate * 35;
+      // Buffer up to 18 seconds (enough for an ~11s v2.1 signal with margin).
+      const maxSamples = audioCtx.sampleRate * 18;
       let totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
       while (captureBuffer.length > 1 && totalSamples > maxSamples) {
         const removed = captureBuffer.shift().length;
@@ -363,7 +540,7 @@ function onWorkerMessage(e) {
     for (const d of msg.debug) logLine("  " + d);
   }
   if (msg.url) {
-    logLine('URL detected: ' + msg.url, "hit");
+    logLine('Payload detected: ' + msg.url, "hit");
     onDecodeSuccess(msg.url);
   } else {
     logLine("  no frame this pass");
@@ -387,17 +564,62 @@ function logLine(s, cls) {
   el.scrollTop = el.scrollHeight;
 }
 
-function onDecodeSuccess(url) {
+// ---- Resolver ----
+// Given the decoded payload, figure out the final destination URL.
+async function resolvePayload(payload) {
+  const trimmed = (payload || "").trim();
+  if (!trimmed) return null;
+
+  // Case 1: bare 6-char Crockford Base32 token: look up in tokens.json.
+  if (AudioQR.isShortToken(trimmed)) {
+    const token = AudioQR.normalizeToken(trimmed);
+    logLine("Resolving short token " + token + " via tokens.json...");
+    try {
+      const res = await fetch("tokens.json?t=" + Date.now());
+      if (res.ok) {
+        const data = await res.json();
+        const url = (data.tokens || {})[token];
+        if (url) {
+          logLine("Token resolved to: " + url, "hit");
+          return url;
+        } else {
+          logLine("Token not found in registry: " + token);
+          return null;
+        }
+      }
+    } catch (e) {
+      logLine("Registry fetch failed: " + e.message);
+    }
+    return null;
+  }
+
+  // Case 2: already a URL.
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  // Case 3: domain/token or any non-URL string. Assume https.
+  return "https://" + trimmed;
+}
+
+async function onDecodeSuccess(payload) {
   stopListening();
-  setStatus("listenStatus", "Signal received.", "success");
-  let safe = url;
-  if (!/^https?:\/\//i.test(safe)) safe = "https://" + safe;
+  setStatus("listenStatus", "Signal received. Resolving...", "success");
+  const url = await resolvePayload(payload);
   const preview = document.getElementById("resultPreview");
-  const safeText = String(safe).replace(/[<>"']/g, "");
+  if (!url) {
+    preview.innerHTML = `
+      <div class="preview" style="border-color:#dc2626;background:#fef2f2;">
+        <div style="font-size: 12px; color: #991b1b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Unknown token</div>
+        <div class="url" style="color:#991b1b;">${String(payload).replace(/[<>"']/g, "")}</div>
+        <small>This token is not in the registry on this site.</small>
+      </div>
+    `;
+    return;
+  }
+  const safeText = String(url).replace(/[<>"']/g, "");
   preview.innerHTML = `
     <div class="preview">
       <div style="font-size: 12px; color: #166534; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Detected</div>
-      <div style="font-size: 18px; font-weight: 600; margin-bottom: 6px;">American Pro Porch</div>
+      <div style="font-size: 13px; color: #44403c; margin-bottom: 4px;">Broadcast payload: <code>${String(payload).replace(/[<>"']/g, "")}</code></div>
       <div class="url">${safeText}</div>
       <a href="${safeText}" target="_blank" rel="noopener">Open in new tab</a>
     </div>
