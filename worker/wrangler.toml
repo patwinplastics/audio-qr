@@ -1,0 +1,13 @@
+name = "audioqr-registry"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# Bind the KV namespace as `TOKENS` inside the worker (env.TOKENS).
+# After running:   wrangler kv namespace create TOKENS
+# Wrangler will print an `id`. Paste it below.
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "93811697747f4266a0d416e40e737664"
+
+# Optional: also create a `_preview` namespace for local testing.
+# preview_id = "REPLACE_WITH_PREVIEW_ID"
