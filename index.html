@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AudioQR · Sonic URL Beacon</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+    background: #fafaf9;
+    color: #1c1917;
+    line-height: 1.5;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: #78716c; margin: 0 0 24px; font-size: 15px; }
+  .card {
+    background: white;
+    border: 1px solid #e7e5e4;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 18px; margin: 0 0 12px; }
+  .row { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 140px; }
+  button {
+    background: #1c1917; color: white; border: 0; padding: 14px 20px;
+    border-radius: 8px; font-size: 16px; font-weight: 500; cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: #f5f5f4; color: #1c1917; border: 1px solid #e7e5e4; }
+  input[type="text"] {
+    width: 100%; padding: 12px 14px; border: 1px solid #d6d3d1;
+    border-radius: 8px; font-size: 15px; font-family: inherit;
+  }
+  .nav {
+    display: flex; gap: 8px; margin-bottom: 24px;
+    border-bottom: 1px solid #e7e5e4;
+  }
+  .nav button {
+    background: transparent; color: #78716c; padding: 12px 16px;
+    border-radius: 0; border-bottom: 2px solid transparent;
+    font-weight: 500;
+  }
+  .nav button.active { color: #1c1917; border-bottom-color: #1c1917; }
+  .hidden { display: none; }
+  .status {
+    font-size: 14px; color: #78716c; margin-top: 12px;
+    padding: 8px 12px; background: #f5f5f4; border-radius: 6px;
+    min-height: 20px;
+  }
+  .status.success { background: #dcfce7; color: #166534; }
+  .status.error { background: #fee2e2; color: #991b1b; }
+  audio { width: 100%; margin-top: 12px; }
+  .preview {
+    border: 2px solid #16a34a; border-radius: 12px; padding: 20px;
+    margin-top: 16px; background: #f0fdf4;
+  }
+  .preview img { width: 100%; border-radius: 8px; margin-bottom: 12px; }
+  .preview .url { font-size: 13px; color: #166534; word-break: break-all; }
+  .preview a {
+    display: block; background: #16a34a; color: white; text-align: center;
+    text-decoration: none; padding: 14px; border-radius: 8px; font-weight: 600;
+    margin-top: 12px;
+  }
+  .mic-level {
+    height: 8px; background: #e7e5e4; border-radius: 4px; overflow: hidden;
+    margin-top: 8px;
+  }
+  .mic-level-bar {
+    height: 100%; background: linear-gradient(90deg, #16a34a, #f59e0b, #dc2626);
+    width: 0%; transition: width 0.1s;
+  }
+  .listen-anim {
+    display: inline-block; width: 12px; height: 12px;
+    border-radius: 50%; background: #dc2626; margin-right: 8px;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+  label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+  small { color: #78716c; font-size: 13px; }
+  .meta {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; color: #78716c; margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>AudioQR</h1>
+<p class="sub">A sonic URL beacon. Encode a URL into sound, hold a phone up to a speaker playing it, get the URL on your phone. Proof of concept.</p>
+
+<div class="nav">
+  <button id="navEncode" class="active" onclick="showTab('encode')">Encode (broadcaster)</button>
+  <button id="navListen" onclick="showTab('listen')">Listen (phone)</button>
+  <button id="navAbout" onclick="showTab('about')">About</button>
+</div>
+
+<!-- ENCODE TAB -->
+<div id="tabEncode">
+  <div class="card">
+    <h2>Encode a URL into an audio file</h2>
+    <label for="urlInput">Destination URL</label>
+    <input type="text" id="urlInput" value="https://americanprobp.com/pages/porch.html" />
+    <small>Shorter URLs make shorter audio. <code>americanprobp.com/p</code> ≈ 9 sec, full URL ≈ 17 sec.</small>
+    <div style="height: 16px"></div>
+    <button onclick="doEncode()">Generate audio</button>
+    <button class="secondary" onclick="doPlay()" id="playBtn" disabled>Play</button>
+    <button class="secondary" onclick="doDownload()" id="dlBtn" disabled>Download WAV</button>
+    <div class="status" id="encodeStatus">Ready.</div>
+    <audio id="audioPlayer" controls class="hidden"></audio>
+    <div class="meta" id="encodeMeta"></div>
+  </div>
+</div>
+
+<!-- LISTEN TAB -->
+<div id="tabListen" class="hidden">
+  <div class="card">
+    <h2>Listen for an AudioQR signal</h2>
+    <p>Tap the button below, allow microphone access, and hold your phone near a speaker playing an AudioQR-encoded audio. When the signal is decoded, a tap card will appear.</p>
+    <button id="listenBtn" onclick="toggleListen()">Start listening</button>
+    <div class="status" id="listenStatus">Tap to begin.</div>
+    <div class="mic-level"><div class="mic-level-bar" id="micBar"></div></div>
+    <div class="meta" id="listenMeta"></div>
+    <div id="resultPreview"></div>
+  </div>
+</div>
+
+<!-- ABOUT TAB -->
+<div id="tabAbout" class="hidden">
+  <div class="card">
+    <h2>How it works</h2>
+    <p><strong>Modulation:</strong> 8-FSK in the 1200–1900 Hz audible band. Each 50 ms symbol carries 3 bits. A 500 ms chirp sweep (500–2500 Hz) marks the start.</p>
+    <p><strong>Frame:</strong> <code>[chirp preamble] [0xAA 0x55] [len] [URL bytes] [CRC-16] [0x55 0xAA]</code>, transmitted twice for redundancy.</p>
+    <p><strong>Why audible band:</strong> FM radio caps audio at 15 kHz; AM caps at 5–10 kHz; podcast codecs (Opus, MP3 at 128 kbps) preserve the speech band (1–4 kHz) best. Putting tones at 1.2–1.9 kHz survives all of these.</p>
+    <p><strong>Why direct URL encoding:</strong> Avoids the Chirp/Sonos shortcode-to-server patent (active until 2032). No server lookup; the URL travels in the audio.</p>
+    <p><strong>What this does not do yet:</strong> No cryptographic signing, no Reed-Solomon FEC (CRC only), no analytics, no app. v1 prototype.</p>
+  </div>
+</div>
+
+<script src="protocol.js"></script>
+<script>
+let currentAudio = null;     // Float32Array of last encoded audio
+let currentWav = null;       // ArrayBuffer of WAV
+let currentUrl = "";
+let audioCtx = null;
+let listenStream = null;
+let listening = false;
+let captureBuffer = [];
+let captureStartedAt = 0;
+let lastDecodeAttempt = 0;
+let micAnalyser = null;
+let micRafId = null;
+
+function showTab(t) {
+  document.getElementById("tabEncode").classList.toggle("hidden", t !== "encode");
+  document.getElementById("tabListen").classList.toggle("hidden", t !== "listen");
+  document.getElementById("tabAbout").classList.toggle("hidden", t !== "about");
+  document.getElementById("navEncode").classList.toggle("active", t === "encode");
+  document.getElementById("navListen").classList.toggle("active", t === "listen");
+  document.getElementById("navAbout").classList.toggle("active", t === "about");
+}
+
+function setStatus(id, msg, cls) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+
+// ---- ENCODE ----
+function doEncode() {
+  const url = document.getElementById("urlInput").value.trim();
+  if (!url) { setStatus("encodeStatus", "Enter a URL.", "error"); return; }
+  setStatus("encodeStatus", "Encoding...");
+  try {
+    currentUrl = url;
+    currentAudio = AudioQR.encodeURL(url);
+    currentWav = AudioQR.audioToWav(currentAudio, AudioQR.PROTOCOL.SAMPLE_RATE);
+    const blob = new Blob([currentWav], { type: "audio/wav" });
+    const blobUrl = URL.createObjectURL(blob);
+    const player = document.getElementById("audioPlayer");
+    player.src = blobUrl;
+    player.classList.remove("hidden");
+    document.getElementById("playBtn").disabled = false;
+    document.getElementById("dlBtn").disabled = false;
+    const durSec = (currentAudio.length / AudioQR.PROTOCOL.SAMPLE_RATE).toFixed(2);
+    setStatus("encodeStatus", "Encoded " + url.length + " bytes into " + durSec + " sec of audio.", "success");
+    document.getElementById("encodeMeta").textContent =
+      "Samples: " + currentAudio.length + " · Rate: " + AudioQR.PROTOCOL.SAMPLE_RATE + " Hz · Size: " + (currentWav.byteLength / 1024).toFixed(1) + " KB";
+  } catch (e) {
+    setStatus("encodeStatus", "Error: " + e.message, "error");
+  }
+}
+
+function doPlay() {
+  const player = document.getElementById("audioPlayer");
+  player.play();
+}
+
+function doDownload() {
+  if (!currentWav) return;
+  const blob = new Blob([currentWav], { type: "audio/wav" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "audioqr.wav";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---- LISTEN ----
+async function toggleListen() {
+  if (listening) {
+    stopListening();
+    return;
+  }
+  try {
+    setStatus("listenStatus", "Requesting microphone...");
+    listenStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+      }
+    });
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(listenStream);
+    micAnalyser = audioCtx.createAnalyser();
+    micAnalyser.fftSize = 1024;
+    src.connect(micAnalyser);
+
+    // Capture via ScriptProcessor (works on iOS Safari + all browsers; deprecated but reliable)
+    const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+    captureBuffer = [];
+    captureStartedAt = Date.now();
+    lastDecodeAttempt = 0;
+    proc.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const chunk = new Float32Array(input.length);
+      chunk.set(input);
+      captureBuffer.push(chunk);
+      // Try decoding every 1.5 sec, on the most recent ~12 sec
+      const now = Date.now();
+      if (now - lastDecodeAttempt > 1500) {
+        lastDecodeAttempt = now;
+        tryDecode();
+      }
+      // Cap buffer at ~20 sec
+      const totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
+      const maxSamples = audioCtx.sampleRate * 20;
+      while (captureBuffer.length > 1 && totalSamples > maxSamples) {
+        const removed = captureBuffer.shift().length;
+        if (totalSamples - removed <= maxSamples) break;
+      }
+    };
+    src.connect(proc);
+    proc.connect(audioCtx.destination);
+    window._audioqr_proc = proc; // keep reference
+
+    listening = true;
+    document.getElementById("listenBtn").textContent = "Stop listening";
+    setStatus("listenStatus", "Listening...");
+    document.getElementById("listenStatus").innerHTML = '<span class="listen-anim"></span>Listening for AudioQR signal...';
+    document.getElementById("resultPreview").innerHTML = "";
+    updateMicLevel();
+  } catch (e) {
+    setStatus("listenStatus", "Microphone error: " + e.message, "error");
+  }
+}
+
+function stopListening() {
+  listening = false;
+  if (listenStream) {
+    listenStream.getTracks().forEach(t => t.stop());
+    listenStream = null;
+  }
+  if (window._audioqr_proc) {
+    window._audioqr_proc.disconnect();
+    window._audioqr_proc = null;
+  }
+  if (micRafId) cancelAnimationFrame(micRafId);
+  document.getElementById("listenBtn").textContent = "Start listening";
+  setStatus("listenStatus", "Stopped.");
+  document.getElementById("micBar").style.width = "0%";
+}
+
+function updateMicLevel() {
+  if (!listening || !micAnalyser) return;
+  const data = new Uint8Array(micAnalyser.fftSize);
+  micAnalyser.getByteTimeDomainData(data);
+  let max = 0;
+  for (const v of data) { const dev = Math.abs(v - 128); if (dev > max) max = dev; }
+  const pct = Math.min(100, (max / 128) * 200);
+  document.getElementById("micBar").style.width = pct + "%";
+  micRafId = requestAnimationFrame(updateMicLevel);
+}
+
+function tryDecode() {
+  if (captureBuffer.length === 0) return;
+  // Concatenate buffer
+  const totalSamples = captureBuffer.reduce((a, c) => a + c.length, 0);
+  const samples = new Float32Array(totalSamples);
+  let pos = 0;
+  for (const c of captureBuffer) { samples.set(c, pos); pos += c.length; }
+  document.getElementById("listenMeta").textContent =
+    "Capturing... " + (totalSamples / audioCtx.sampleRate).toFixed(1) + " sec @ " + audioCtx.sampleRate + " Hz";
+
+  const url = AudioQR.decodeAudio(samples, audioCtx.sampleRate);
+  if (url) {
+    onDecodeSuccess(url);
+  }
+}
+
+function onDecodeSuccess(url) {
+  stopListening();
+  setStatus("listenStatus", "Signal received.", "success");
+  // Validate URL
+  let safe = url;
+  if (!/^https?:\/\//i.test(safe)) safe = "https://" + safe;
+  const preview = document.getElementById("resultPreview");
+  preview.innerHTML = `
+    <div class="preview">
+      <div style="font-size: 12px; color: #166534; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Detected</div>
+      <div style="font-size: 18px; font-weight: 600; margin-bottom: 6px;">American Pro Porch</div>
+      <div class="url">${safe}</div>
+      <a href="${safe}" target="_blank" rel="noopener">Open in new tab →</a>
+    </div>
+  `;
+}
+
+// Default to encode tab; if URL has #listen, switch
+if (location.hash === "#listen") showTab("listen");
+</script>
+</body>
+</html>
