@@ -176,6 +176,17 @@ function encodeBytesToAudio(urlBytes, sampleRate) {
     p += postTrainGap;
     out.set(payload, p); p += payload.length;
   }
+  // Normalize to peak ~0.95 so the WAV plays back loud and the chirp correlation
+  // arrives at the listener as strong as possible. Earlier builds left peak ~0.6.
+  let peak = 0;
+  for (let i = 0; i < out.length; i++) {
+    const v = Math.abs(out[i]);
+    if (v > peak) peak = v;
+  }
+  if (peak > 1e-6 && peak < 0.95) {
+    const gain = 0.95 / peak;
+    for (let i = 0; i < out.length; i++) out[i] *= gain;
+  }
   return out;
 }
 
@@ -444,7 +455,10 @@ function decodeAudio(samples, sampleRate, debugFn) {
   const shortCands = findPreambleCandidates(samples, sampleRate, debugFn, 10, PROTOCOL.SHORT_PREAMBLE_MS);
 
   // Dedup candidates that are within 50ms of each other; keep the higher-norm
-  const allCands = [...longCands, ...shortCands].filter(c => c.norm > 0.15);
+  // Lowered threshold from 0.15 to 0.08 to handle weaker phone-mic captures.
+  // False positives are caught downstream by CRC validation, so the cost of
+  // lowering is just a few extra trial decodes per pass.
+  const allCands = [...longCands, ...shortCands].filter(c => c.norm > 0.08);
   allCands.sort((a, b) => a.pos - b.pos);
   const dedup = [];
   for (const c of allCands) {
@@ -528,9 +542,11 @@ function normalizeSamples(samples) {
     if (v > peak) peak = v;
   }
   if (peak < 1e-6) return samples;
-  if (peak > 0.6) return samples;
-  // Boost so peak ~0.8
-  const gain = 0.8 / peak;
+  // Always re-normalize to ~0.95 peak. Earlier versions skipped if peak > 0.6,
+  // but that left signals at modest amplitude and pulled mic-side correlation
+  // values too low in noisy rooms. Now we always push to near-full-scale.
+  if (peak >= 0.95) return samples;
+  const gain = 0.95 / peak;
   const out = new Float32Array(samples.length);
   for (let i = 0; i < samples.length; i++) out[i] = samples[i] * gain;
   return out;
